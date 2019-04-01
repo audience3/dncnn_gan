@@ -210,9 +210,9 @@ for epoch in range(start_epoch,epochs):
 
 
         if i%1==0:
-            print('%d || ssim: %.4f ~ %.4f || loss: %.4f '%(i+1,ssim0,ssim1,loss.item()))
+            print('epoch:%d  batch:%d|| ssim: %.4f ~ %.4f || loss: %.4f '%(epoch,i+1,ssim0,ssim1,loss.item()))
             mse_.append(mse.item())
-            ssim_.append(ssim0.item())
+            ssim_.append(ssim0)
             network_loss.append(loss.item())
 
 
