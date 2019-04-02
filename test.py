@@ -12,7 +12,8 @@ import torch.optim as optim
 import math
 from torchvision import transforms, datasets,models
 import pytorch_ssim
-
+from models.discriminators.snresnet64 import SNResNetProjectionDiscriminator
+import losses as L
 
 
 #make a parser
@@ -31,8 +32,10 @@ manual_seed = 999
 global_step=0
 
 # data_dir = 'data/train_set'
-data_dir='/Users/audience/Desktop/cv/own_project/perceptual/result/reveals'
-origin_dir='/Users/audience/Desktop/cv/own_project/perceptual/result/secrets'
+# data_dir='/Users/audience/Desktop/cv/own_project/perceptual/result/reveals'
+# origin_dir='/Users/audience/Desktop/cv/own_project/perceptual/result/secrets'
+data_dir='/home/users/yustudent1/Desktop/dataset/denoise/reveals'
+origin_dir='/home/users/yustudent1/Desktop/dataset/denoise/secrets'
 model_dir= 'model'
 # hyperparas definition
 batch_size=4
@@ -87,6 +90,12 @@ def weights_init(m):
         m.weight.data.normal_(1.0, 0.02)
         m.bias.data.fill_(0)
 
+
+############################################################################################
+############################################################################################
+#network definition
+
+
 #the denoising network
 ##############################################
 
@@ -95,16 +104,28 @@ dncnn=dncnn.to(device)
 dncnn.apply(weights_init_kaiming)
 
 #inception v3
-sigmoid=nn.Sigmoid()
-discriminator=models.Inception3(num_classes=1,aux_logits=False)
-discriminator=discriminator.to(device)
+
+# sigmoid=nn.Sigmoid()
+# discriminator=models.Inception3(num_classes=1,aux_logits=False)
+# discriminator=discriminator.to(device)
 # discriminator.apply(weights_init)
 
+#snresnet64
 
+discriminator=SNResNetProjectionDiscriminator(num_classes=0)
+discriminator=discriminator.to(device)
+
+
+
+#losses
 
 ssim=pytorch_ssim.SSIM()
 bce_loss=nn.BCELoss()
 mse_loss=nn.MSELoss()
+gen_criterion=L.GenLoss("hinge",False)
+dis_criterion=L.DisLoss("hinge",False)
+
+
 
 optimizerG=optim.Adam(dncnn.parameters(),lr=learning_rate)
 optimizerD=optim.Adam(discriminator.parameters(),lr=3*learning_rate)
@@ -169,6 +190,9 @@ for epoch in range(start_epoch,epochs):
         origin = 0 + 0.299 * origin[:, 0, :, :] + 0.587 * origin[:, 1, :, :] + 0.114 * origin[:, 2, :, :]
         origin = origin.view(-1, 1, 256, 256)
 
+        images.to(device)
+        origin.to(device)
+
 
         dncnn.zero_grad()
 
@@ -178,10 +202,13 @@ for epoch in range(start_epoch,epochs):
         ssim1=ssim(images,origin).item()
 
 #train G
-        cls_fake=sigmoid(discriminator(denoised))
+#       true_label = torch.ones(cls_fake.size(), device=device)
+        #cls_fake=sigmoid(discriminator(denoised))
+        #errG = bce_loss(cls_fake, true_label)
+        cls_fake=discriminator(denoised)
+        errG=gen_criterion(cls_fake)
 
-        true_label=torch.ones(cls_fake.size(),device=device)
-        errG=bce_loss(cls_fake,true_label)
+
         mse=mse_loss(denoised,origin)
         loss=mse*100+errG
         loss.backward()
@@ -191,33 +218,38 @@ for epoch in range(start_epoch,epochs):
 
 #train D
 
-        if i%3==0:
+        if i%1==0:
             discriminator.zero_grad()
             fake=denoised.detach()
 
+            #fake_label = torch.zeros(cls_fake.size(), device=device)
+            # cls_fake=sigmoid(discriminator(fake))
+            # error_fake=bce_loss(cls_fake,fake_label)
 
-            cls_fake=sigmoid(discriminator(fake))
-            fake_label = torch.zeros(cls_fake.size(), device=device)
-            error_fake=bce_loss(cls_fake,fake_label)
+            # cls_real=sigmoid(discriminator(origin))
+            # error_real=bce_loss(cls_real,true_label)
+            #errors = error_fake + error_real
+            cls_fake=discriminator(fake)
+            cls_real=discriminator(origin)
+            errors=dis_criterion(cls_fake,cls_real)
 
-            cls_real=sigmoid(discriminator(origin))
-            error_real=bce_loss(cls_real,true_label)
 
-            errors=error_fake+error_real
+
             errors.backward()
             optimizerD.step()
 
 
 
         if i%1==0:
-            print('epoch:%d  batch:%d|| ssim: %.4f ~ %.4f || loss: %.4f '%(epoch,i+1,ssim0,ssim1,loss.item()))
+            print('epoch:%d batch:%d || ssim: %.4f ~ %.4f || loss: %.4f || dis: %.4f || mse: %.4f ' % (
+            epoch, i + 1, ssim0, ssim1, loss.item(), errG, mse.item()))
             mse_.append(mse.item())
             ssim_.append(ssim0)
             network_loss.append(loss.item())
 
 
 
-    if  epoch%2==0:
+    if  epoch%4==0:
         path=model_dir+'/'+str(epoch)+'.pth.tar'
         torch.save({
             'epoch':epoch,
